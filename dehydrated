@@ -591,6 +591,7 @@ sign_domain() {
   fi
 
   privkey="privkey.pem"
+  csr="cert.csr"
   if [[ ! -r "${CERTDIR}/${domain}/cert.csr" ]] || [[ "${CSR_RENEW}" = "yes" ]]; then
     # generate a new private key if we need or want one
     if [[ ! -r "${CERTDIR}/${domain}/privkey.pem" ]] || [[ "${PRIVATE_KEY_RENEW}" = "yes" ]]; then
@@ -624,6 +625,7 @@ sign_domain() {
 
     # Generate signing request config and the actual signing request
     echo " + Generating signing request..."
+    csr="cert-${timestamp}.csr"
     SAN=""
     for altname in ${altnames}; do
       SAN+="DNS:${altname}, "
@@ -642,7 +644,7 @@ sign_domain() {
 
   crt_path="${CERTDIR}/${domain}/cert-${timestamp}.pem"
   # shellcheck disable=SC2086
-  sign_csr "$(< "${CERTDIR}/${domain}/cert-${timestamp}.csr" )" ${altnames} 3>"${crt_path}"
+  sign_csr "$(< "${CERTDIR}/${domain}/${csr}" )" ${altnames} 3>"${crt_path}"
 
   # Create fullchain.pem
   echo " + Creating fullchain.pem..."
@@ -659,10 +661,10 @@ sign_domain() {
 
   # Update symlinks
   [[ "${privkey}" = "privkey.pem" ]] || ln -sf "privkey-${timestamp}.pem" "${CERTDIR}/${domain}/privkey.pem"
+  [[ "${csr}" = "cert.csr" ]] || ln -sf "cert-${timestamp}.csr" "${CERTDIR}/${domain}/cert.csr"
 
   ln -sf "chain-${timestamp}.pem" "${CERTDIR}/${domain}/chain.pem"
   ln -sf "fullchain-${timestamp}.pem" "${CERTDIR}/${domain}/fullchain.pem"
-  ln -sf "cert-${timestamp}.csr" "${CERTDIR}/${domain}/cert.csr"
   ln -sf "cert-${timestamp}.pem" "${CERTDIR}/${domain}/cert.pem"
 
   # Wait for hook script to clean the challenge and to deploy cert if used
