@@ -50,6 +50,7 @@ check_dependencies() {
 store_configvars() {
   __KEY_ALGO="${KEY_ALGO}"
   __OCSP_MUST_STAPLE="${OCSP_MUST_STAPLE}"
+  __CSR_RENEW="${CSR_RENEW}"
   __PRIVATE_KEY_RENEW="${PRIVATE_KEY_RENEW}"
   __KEYSIZE="${KEYSIZE}"
   __CHALLENGETYPE="${CHALLENGETYPE}"
@@ -64,6 +65,7 @@ store_configvars() {
 reset_configvars() {
   KEY_ALGO="${__KEY_ALGO}"
   OCSP_MUST_STAPLE="${__OCSP_MUST_STAPLE}"
+  CSR_RENEW="${__CSR_RENEW}"
   PRIVATE_KEY_RENEW="${__PRIVATE_KEY_RENEW}"
   KEYSIZE="${__KEYSIZE}"
   CHALLENGETYPE="${__CHALLENGETYPE}"
@@ -117,6 +119,7 @@ load_config() {
   RENEW_DAYS="30"
   KEYSIZE="4096"
   WELLKNOWN=
+  CSR_RENEW="yes"
   PRIVATE_KEY_RENEW="yes"
   PRIVATE_KEY_ROLLOVER="no"
   KEY_ALGO=rsa
@@ -588,52 +591,54 @@ sign_domain() {
   fi
 
   privkey="privkey.pem"
-  # generate a new private key if we need or want one
-  if [[ ! -r "${CERTDIR}/${domain}/privkey.pem" ]] || [[ "${PRIVATE_KEY_RENEW}" = "yes" ]]; then
-    echo " + Generating private key..."
-    privkey="privkey-${timestamp}.pem"
-    case "${KEY_ALGO}" in
-      rsa) _openssl genrsa -out "${CERTDIR}/${domain}/privkey-${timestamp}.pem" "${KEYSIZE}";;
-      prime256v1|secp384r1) _openssl ecparam -genkey -name "${KEY_ALGO}" -out "${CERTDIR}/${domain}/privkey-${timestamp}.pem";;
-    esac
-  fi
-  # move rolloverkey into position (if any)
-  if [[ -r "${CERTDIR}/${domain}/privkey.pem" && -r "${CERTDIR}/${domain}/privkey.roll.pem" && "${PRIVATE_KEY_RENEW}" = "yes" && "${PRIVATE_KEY_ROLLOVER}" = "yes" ]]; then
-    echo " + Moving Rolloverkey into position....  "
-    mv "${CERTDIR}/${domain}/privkey.roll.pem" "${CERTDIR}/${domain}/privkey-tmp.pem"
-    mv "${CERTDIR}/${domain}/privkey-${timestamp}.pem" "${CERTDIR}/${domain}/privkey.roll.pem"
-    mv "${CERTDIR}/${domain}/privkey-tmp.pem" "${CERTDIR}/${domain}/privkey-${timestamp}.pem"
-  fi
-  # generate a new private rollover key if we need or want one
-  if [[ ! -r "${CERTDIR}/${domain}/privkey.roll.pem" && "${PRIVATE_KEY_ROLLOVER}" = "yes" && "${PRIVATE_KEY_RENEW}" = "yes" ]]; then
-    echo " + Generating private rollover key..."
-    case "${KEY_ALGO}" in
-      rsa) _openssl genrsa -out "${CERTDIR}/${domain}/privkey.roll.pem" "${KEYSIZE}";;
-      prime256v1|secp384r1) _openssl ecparam -genkey -name "${KEY_ALGO}" -out "${CERTDIR}/${domain}/privkey.roll.pem";;
-    esac
-  fi
-  # delete rolloverkeys if disabled
-  if [[ -r "${CERTDIR}/${domain}/privkey.roll.pem" && ! "${PRIVATE_KEY_ROLLOVER}" = "yes" ]]; then
-    echo " + Removing Rolloverkey (feature disabled)..."
-    rm -f "${CERTDIR}/${domain}/privkey.roll.pem"
-  fi
+  if [[ ! -r "${CERTDIR}/${domain}/cert.csr" ]] || [[ "${CSR_RENEW}" = "yes" ]]; then
+    # generate a new private key if we need or want one
+    if [[ ! -r "${CERTDIR}/${domain}/privkey.pem" ]] || [[ "${PRIVATE_KEY_RENEW}" = "yes" ]]; then
+      echo " + Generating private key..."
+      privkey="privkey-${timestamp}.pem"
+      case "${KEY_ALGO}" in
+        rsa) _openssl genrsa -out "${CERTDIR}/${domain}/privkey-${timestamp}.pem" "${KEYSIZE}";;
+        prime256v1|secp384r1) _openssl ecparam -genkey -name "${KEY_ALGO}" -out "${CERTDIR}/${domain}/privkey-${timestamp}.pem";;
+      esac
+    fi
+    # move rolloverkey into position (if any)
+    if [[ -r "${CERTDIR}/${domain}/privkey.pem" && -r "${CERTDIR}/${domain}/privkey.roll.pem" && "${PRIVATE_KEY_RENEW}" = "yes" && "${PRIVATE_KEY_ROLLOVER}" = "yes" ]]; then
+      echo " + Moving Rolloverkey into position....  "
+      mv "${CERTDIR}/${domain}/privkey.roll.pem" "${CERTDIR}/${domain}/privkey-tmp.pem"
+      mv "${CERTDIR}/${domain}/privkey-${timestamp}.pem" "${CERTDIR}/${domain}/privkey.roll.pem"
+      mv "${CERTDIR}/${domain}/privkey-tmp.pem" "${CERTDIR}/${domain}/privkey-${timestamp}.pem"
+    fi
+    # generate a new private rollover key if we need or want one
+    if [[ ! -r "${CERTDIR}/${domain}/privkey.roll.pem" && "${PRIVATE_KEY_ROLLOVER}" = "yes" && "${PRIVATE_KEY_RENEW}" = "yes" ]]; then
+      echo " + Generating private rollover key..."
+      case "${KEY_ALGO}" in
+        rsa) _openssl genrsa -out "${CERTDIR}/${domain}/privkey.roll.pem" "${KEYSIZE}";;
+        prime256v1|secp384r1) _openssl ecparam -genkey -name "${KEY_ALGO}" -out "${CERTDIR}/${domain}/privkey.roll.pem";;
+      esac
+    fi
+    # delete rolloverkeys if disabled
+    if [[ -r "${CERTDIR}/${domain}/privkey.roll.pem" && ! "${PRIVATE_KEY_ROLLOVER}" = "yes" ]]; then
+      echo " + Removing Rolloverkey (feature disabled)..."
+      rm -f "${CERTDIR}/${domain}/privkey.roll.pem"
+    fi
 
-  # Generate signing request config and the actual signing request
-  echo " + Generating signing request..."
-  SAN=""
-  for altname in ${altnames}; do
-    SAN+="DNS:${altname}, "
-  done
-  SAN="${SAN%%, }"
-  local tmp_openssl_cnf
-  tmp_openssl_cnf="$(_mktemp)"
-  cat "${OPENSSL_CNF}" > "${tmp_openssl_cnf}"
-  printf "[SAN]\nsubjectAltName=%s" "${SAN}" >> "${tmp_openssl_cnf}"
-  if [ "${OCSP_MUST_STAPLE}" = "yes" ]; then
-    printf "\n1.3.6.1.5.5.7.1.24=DER:30:03:02:01:05" >> "${tmp_openssl_cnf}"
+    # Generate signing request config and the actual signing request
+    echo " + Generating signing request..."
+    SAN=""
+    for altname in ${altnames}; do
+      SAN+="DNS:${altname}, "
+    done
+    SAN="${SAN%%, }"
+    local tmp_openssl_cnf
+    tmp_openssl_cnf="$(_mktemp)"
+    cat "${OPENSSL_CNF}" > "${tmp_openssl_cnf}"
+    printf "[SAN]\nsubjectAltName=%s" "${SAN}" >> "${tmp_openssl_cnf}"
+    if [ "${OCSP_MUST_STAPLE}" = "yes" ]; then
+      printf "\n1.3.6.1.5.5.7.1.24=DER:30:03:02:01:05" >> "${tmp_openssl_cnf}"
+    fi
+    openssl req -new -sha256 -key "${CERTDIR}/${domain}/${privkey}" -out "${CERTDIR}/${domain}/cert-${timestamp}.csr" -subj "/CN=${domain}/" -reqexts SAN -config "${tmp_openssl_cnf}"
+    rm -f "${tmp_openssl_cnf}"
   fi
-  openssl req -new -sha256 -key "${CERTDIR}/${domain}/${privkey}" -out "${CERTDIR}/${domain}/cert-${timestamp}.csr" -subj "/CN=${domain}/" -reqexts SAN -config "${tmp_openssl_cnf}"
-  rm -f "${tmp_openssl_cnf}"
 
   crt_path="${CERTDIR}/${domain}/cert-${timestamp}.pem"
   # shellcheck disable=SC2086
